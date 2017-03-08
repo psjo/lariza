@@ -85,7 +85,7 @@ static GHashTable *keywords = NULL;
 static gchar *search_text = NULL;
 static gboolean tabbed_automagic = TRUE;
 static gchar *user_agent = NULL;
-
+static int modifier = GDK_MOD1_MASK;
 
 void
 client_destroy(GtkWidget *obj, gpointer data)
@@ -196,6 +196,18 @@ client_new(const gchar *uri, WebKitWebView *related_wv, gboolean show)
         trust_user_certs(wc);
 
         initial_wc_setup_done = TRUE;
+                //css style ugly hack by a hack. Error checking some other day...
+                gchar *cssFile = g_build_filename(g_get_user_config_dir(), 
+                                __NAME__, "style.css", NULL);
+                if (!access(cssFile, 0)) {
+                        GtkCssProvider *css = gtk_css_provider_new();
+                        if (gtk_css_provider_load_from_path(css, cssFile, NULL)) {
+                                gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), 
+                                                GTK_STYLE_PROVIDER(css), 
+                                                GTK_STYLE_PROVIDER_PRIORITY_USER);
+                        }
+                }
+                g_free(cssFile);
     }
 
     if (user_agent != NULL)
@@ -206,9 +218,17 @@ client_new(const gchar *uri, WebKitWebView *related_wv, gboolean show)
     g_signal_connect(G_OBJECT(c->location), "key-press-event",
                      G_CALLBACK(key_location), c);
 
-    c->vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_box_pack_start(GTK_BOX(c->vbox), c->location, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(c->vbox), c->web_view, TRUE, TRUE, 0);
+        gtk_widget_set_hexpand(c->location, TRUE);
+        gtk_widget_set_hexpand(c->web_view, TRUE);
+        gtk_widget_set_vexpand(c->web_view, TRUE);
+
+    c->vbox = gtk_grid_new();
+    
+        gtk_grid_attach(GTK_GRID(c->vbox), c->location, 0, 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(c->vbox), c->web_view, 0, 0, 2, 1);
+    //gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    //gtk_box_pack_start(GTK_BOX(c->vbox), c->location, FALSE, FALSE, 0);
+    //gtk_box_pack_start(GTK_BOX(c->vbox), c->web_view, TRUE, TRUE, 0);
 
     gtk_container_add(GTK_CONTAINER(c->win), c->vbox);
 
@@ -603,12 +623,15 @@ hover_web_view(WebKitWebView *web_view, WebKitHitTestResult *ht, guint modifiers
     {
         if (webkit_hit_test_result_context_is_link(ht))
         {
+                gchar *hover_uri = g_strdup(webkit_hit_test_result_get_link_uri(ht));
             gtk_entry_set_text(GTK_ENTRY(c->location),
-                               webkit_hit_test_result_get_link_uri(ht));
+                               hover_uri);
+                               //webkit_hit_test_result_get_link_uri(ht));
 
             if (c->hover_uri != NULL)
                 g_free(c->hover_uri);
-            c->hover_uri = g_strdup(webkit_hit_test_result_get_link_uri(ht));
+            c->hover_uri = hover_uri; //g_strdup(webkit_hit_test_result_get_link_uri(ht));
+            
         }
         else
         {
@@ -631,14 +654,14 @@ key_common(GtkWidget *widget, GdkEvent *event, gpointer data)
 
     if (event->type == GDK_KEY_PRESS)
     {
-        if (((GdkEventKey *)event)->state & GDK_MOD1_MASK)
+        if (((GdkEventKey *)event)->state & modifier)
         {
             switch (((GdkEventKey *)event)->keyval)
             {
-                case GDK_KEY_q:  /* close window (left hand) */
+                case GDK_KEY_w:  /* close window (left hand) */
                     gtk_widget_destroy(c->win);
                     return TRUE;
-                case GDK_KEY_w:  /* home (left hand) */
+                case GDK_KEY_h:  /* home (left hand) */
                     f = ensure_uri_scheme(home_uri);
                     webkit_web_view_load_uri(WEBKIT_WEB_VIEW(c->web_view), f);
                     g_free(f);
@@ -655,15 +678,19 @@ key_common(GtkWidget *widget, GdkEvent *event, gpointer data)
                 case GDK_KEY_d:  /* download manager (left hand) */
                     gtk_widget_show_all(dm.win);
                     return TRUE;
-                case GDK_KEY_2:  /* search forward (left hand) */
                 case GDK_KEY_n:  /* search forward (maybe both hands) */
                     search(c, 1);
                     return TRUE;
-                case GDK_KEY_3:  /* search backward (left hand) */
+                case GDK_KEY_p:  /* search backward (left hand) */
                     search(c, -1);
                     return TRUE;
                 case GDK_KEY_l:  /* location (BOTH hands) */
+                    //gtk_widget_show(c->location);
+                    gtk_widget_show_all(c->vbox);
                     gtk_widget_grab_focus(c->location);
+                    return TRUE;
+                case GDK_KEY_g:  /* hide location (BOTH hands) */
+                    gtk_widget_hide(c->location);
                     return TRUE;
                 case GDK_KEY_k:  /* initiate search (BOTH hands) */
                     gtk_widget_grab_focus(c->location);
@@ -680,6 +707,13 @@ key_common(GtkWidget *widget, GdkEvent *event, gpointer data)
                         webkit_web_view_get_uri(WEBKIT_WEB_VIEW(c->web_view)));
                     external_handler_run(NULL, c);
                     return TRUE;
+                case GDK_KEY_b:  /* go back */
+                    webkit_web_view_go_back(WEBKIT_WEB_VIEW(c->web_view));
+                    return TRUE;
+                case GDK_KEY_f:  /* go forward */
+                    webkit_web_view_go_forward(WEBKIT_WEB_VIEW(c->web_view));
+                    return TRUE;
+
             }
         }
         /* navigate backward (left hand) */
@@ -704,7 +738,8 @@ key_downloadmanager(GtkWidget *widget, GdkEvent *event, gpointer data)
 {
     if (event->type == GDK_KEY_PRESS)
     {
-        if (((GdkEventKey *)event)->state & GDK_MOD1_MASK)
+        //if (((GdkEventKey *)event)->state & GDK_MOD1_MASK)
+        if (((GdkEventKey *)event)->state & modifier)
         {
             switch (((GdkEventKey *)event)->keyval)
             {
@@ -1043,13 +1078,19 @@ main(int argc, char **argv)
 
     grab_environment_configuration();
 
-    while ((opt = getopt(argc, argv, "e:CT")) != -1)
+    while ((opt = getopt(argc, argv, "e:d:cCT")) != -1)
     {
         switch (opt)
         {
             case 'e':
                 embed = atol(optarg);
                 tabbed_automagic = FALSE;
+                break;
+            case 'd':
+                download_dir = optarg;
+                break;
+            case 'c':
+                modifier = GDK_CONTROL_MASK;
                 break;
             case 'C':
                 cooperative_instances = FALSE;
